@@ -1,0 +1,17 @@
+<div>
+  <ul>
+    {{- /*gotype: mail-client.MailboxTreeData*/ -}}
+    {{ range .Accounts }}
+    <li>
+      {{ .Email }}
+      <ul>
+        {{ range .Mailboxes }}
+        <li>
+          <button>{{ .Name }}</button>
+        </li>
+        {{ end }}
+      </ul>
+    </li>
+    {{ end }}
+  </ul>
+</div>

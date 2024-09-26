@@ -1,6 +1,5 @@
 html {
     background-color: rgba(27, 38, 54, 1);
-    text-align: center;
     color: white;
 }
 
@@ -22,5 +21,34 @@ body {
 
 #app {
     height: 100vh;
-    text-align: center;
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    box-sizing: border-box;
+}
+
+#app div {
+    border: 1px solid white;
+    box-sizing: border-box;
+}
+
+#mailboxesColumn {
+    width: 20%;
+}
+
+#messagesColumn {
+    width: 30%;
+    height: 100%;
+    overflow-y: auto;
+}
+
+#messageColumn {
+    width: 50%;
+    height: 100%;
+    overflow-y: auto;
+}
+
+h4 {
+    margin: 0;
+    padding-top: 20px;
 }
