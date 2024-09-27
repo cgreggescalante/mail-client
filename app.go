@@ -14,10 +14,8 @@ import (
 	"time"
 )
 
-const EMAIL = "conor@johngregg.org"
-const PASSWORD = "HY2tn2B8Bnp2aXn_"
-
 type App struct {
+	config          Config
 	ctx             context.Context
 	accounts        []Account
 	messages        []Message
@@ -42,10 +40,11 @@ type Message struct {
 	Body    string
 }
 
-func NewApp() *App {
+func NewApp(config Config) *App {
 	return &App{
+		config: config,
 		accounts: []Account{{
-			EMAIL,
+			config.Email,
 			[]imap.ListData{},
 		}},
 	}
@@ -64,7 +63,7 @@ func (a *App) LoadMailboxes() {
 
 	defer c.Logout()
 
-	if err := c.Login(EMAIL, PASSWORD).Wait(); err != nil {
+	if err := c.Login(a.config.Email, a.config.Password).Wait(); err != nil {
 		log.Printf("Error logging in: %v", err)
 		return
 	}
@@ -99,7 +98,7 @@ func (a *App) LoadMessages() {
 
 	defer c.Logout()
 
-	if err := c.Login(EMAIL, PASSWORD).Wait(); err != nil {
+	if err := c.Login(a.config.Email, a.config.Password).Wait(); err != nil {
 		log.Printf("Error logging in: %v", err)
 		return
 	}

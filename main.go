@@ -12,7 +12,9 @@ import (
 var assets embed.FS
 
 func main() {
-	app := NewApp()
+	config := GetConfig()
+
+	app := NewApp(config)
 
 	err := wails.Run(&options.App{
 		Title:  "mail-client",

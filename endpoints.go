@@ -22,7 +22,7 @@ func (a *App) GetMailboxTree() string {
 
 	tmpl := template.Must(template.ParseFiles("./templates/mailbox-tree.gohtml"))
 	var rendered bytes.Buffer
-	err := tmpl.Execute(&rendered, MailboxTreeData{Accounts: []MailboxTreeAccount{{Email: EMAIL, Mailboxes: []string{"INBOX"}}}})
+	err := tmpl.Execute(&rendered, MailboxTreeData{Accounts: []MailboxTreeAccount{{Email: a.config.Email, Mailboxes: []string{"INBOX"}}}})
 	if err != nil {
 		return "Could not render templates"
 	}
