@@ -3,11 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
-	"github.com/emersion/go-imap"
-	"github.com/emersion/go-imap/client"
-	"github.com/emersion/go-message"
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
+	"github.com/emersion/go-message/charset"
+	"github.com/emersion/go-message/mail"
+	"io"
 	"log"
+	"mime"
 	"strings"
+	"time"
 )
 
 const EMAIL = "conor@johngregg.org"
@@ -16,15 +20,33 @@ const PASSWORD = "HY2tn2B8Bnp2aXn_"
 type App struct {
 	ctx             context.Context
 	accounts        []Account
-	messages        []imap.Message
+	messages        []Message
 	loadedMailboxes bool
+	loadedMessages  bool
+}
+
+type Account struct {
+	Email     string `json:"email"`
+	Mailboxes []imap.ListData
+}
+
+type Message struct {
+	Uid     uint32
+	Date    time.Time
+	From    []*mail.Address
+	To      []*mail.Address
+	ReplyTo []*mail.Address
+	Cc      []*mail.Address
+	Bcc     []*mail.Address
+	Subject string
+	Body    string
 }
 
 func NewApp() *App {
 	return &App{
 		accounts: []Account{{
 			EMAIL,
-			[]imap.MailboxInfo{},
+			[]imap.ListData{},
 		}},
 	}
 }
@@ -33,24 +55,8 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
-type Account struct {
-	Email     string `json:"email"`
-	Mailboxes []imap.MailboxInfo
-}
-
-type Mailbox struct {
-	Name string `json:"name"`
-}
-
-type Message struct {
-	Subject string `json:"subject"`
-	From    string `json:"from"`
-	Uid     uint32 `json:"uid"`
-	Body    string `json:"body"`
-}
-
 func (a *App) LoadMailboxes() {
-	c, err := client.DialTLS("mail.hover.com:993", nil)
+	c, err := imapclient.DialTLS("mail.hover.com:993", nil)
 	if err != nil {
 		log.Printf("Error connecting to mail server: %v", err)
 		return
@@ -58,139 +64,283 @@ func (a *App) LoadMailboxes() {
 
 	defer c.Logout()
 
-	if err := c.Login(EMAIL, PASSWORD); err != nil {
+	if err := c.Login(EMAIL, PASSWORD).Wait(); err != nil {
 		log.Printf("Error logging in: %v", err)
 		return
 	}
 
-	mailboxes := make(chan *imap.MailboxInfo, 10)
-	done := make(chan error, 1)
-	go func() {
-		done <- c.List("", "*", mailboxes)
-	}()
+	listCmd := c.List("", "*", &imap.ListOptions{
+		ReturnStatus: &imap.StatusOptions{
+			NumMessages: true,
+			NumUnseen:   true,
+		},
+	})
 
-	for m := range mailboxes {
-		a.accounts[0].Mailboxes = append(a.accounts[0].Mailboxes, *m)
+	mailboxes, err := listCmd.Collect()
+	if err != nil {
+		log.Printf("Error listing mailboxes: %v", err)
 	}
 
-	if err := <-done; err != nil {
-		log.Printf("Error listing mailboxes: %v", err)
+	for _, m := range mailboxes {
+		a.accounts[0].Mailboxes = append(a.accounts[0].Mailboxes, *m)
 	}
 
 	a.loadedMailboxes = true
 }
 
-func (a *App) GetMessage(Uid uint32) Message {
-	for _, message := range a.messages {
-		if message.Uid == Uid {
-			return Message{
-				Subject: message.Envelope.Subject,
-				From:    message.Envelope.From[0].Address(),
-			}
-		}
-	}
-
-	return Message{
-		Subject: "Not",
-		From:    "Found",
-	}
-}
-
-func (a *App) GetImapMessages() []Message {
-	c, err := client.DialTLS("mail.hover.com:993", nil)
+func (a *App) LoadMessages() {
+	c, err := imapclient.DialTLS("mail.hover.com:993", &imapclient.Options{
+		WordDecoder: &mime.WordDecoder{CharsetReader: charset.Reader},
+	})
 	if err != nil {
-		return []Message{}
+		log.Printf("Error connecting to mail server: %v", err)
+		return
 	}
 
 	defer c.Logout()
 
-	if err := c.Login(EMAIL, PASSWORD); err != nil {
-		return []Message{}
+	if err := c.Login(EMAIL, PASSWORD).Wait(); err != nil {
+		log.Printf("Error logging in: %v", err)
+		return
 	}
 
-	mbox, err := c.Select("INBOX", false)
+	mailbox := imap.ListData{}
+	ok := false
+	for _, m := range a.accounts[0].Mailboxes {
+		if m.Mailbox == "INBOX" {
+			mailbox = m
+			ok = true
+			break
+		}
+	}
+
+	if !ok {
+		log.Println("INBOX mailbox not found")
+		return
+	}
+
+	c.Select(mailbox.Mailbox, nil).Wait()
+
+	seqSet := imap.SeqSetNum(1, 2, 3, 4, 5)
+
+	fetchOptions := &imap.FetchOptions{
+		UID:         true,
+		BodySection: []*imap.FetchItemBodySection{{}},
+	}
+	fetchCmd := c.Fetch(seqSet, fetchOptions)
+	defer func(fetchCmd *imapclient.FetchCommand) {
+		err := fetchCmd.Close()
+		if err != nil {
+			log.Printf("Error closing FETCH command: %v", err)
+		}
+	}(fetchCmd)
+
+	messageBuffer, err := fetchCmd.Collect()
 	if err != nil {
-		return []Message{}
-	}
-	log.Printf("Flags %v", mbox.Flags)
-
-	from := uint32(1)
-	to := mbox.Messages
-	if mbox.Messages > 1 {
-		from = mbox.Messages - 1
+		log.Printf("Error fetching messages: %v", err)
+		return
 	}
 
-	seqset := new(imap.SeqSet)
-	seqset.AddRange(from, to)
+	for _, msg := range messageBuffer {
+		log.Printf("UID: %v", msg.UID)
+		message := Message{Uid: uint32(msg.UID)}
 
-	messages := make(chan *imap.Message, 1)
-	done := make(chan error, 1)
-	section := &imap.BodySectionName{}
-	go func() {
-		done <- c.Fetch(seqset, []imap.FetchItem{section.FetchItem(), imap.FetchBody, imap.FetchUid, imap.FetchEnvelope, imap.FetchBodyStructure}, messages)
-	}()
+		bodySection := imap.FetchItemBodySection{}
+		bodyBytes := []byte{}
+		ok := false
 
-	for msg := range messages {
-		a.messages = append(a.messages, *msg)
-	}
+		for section, sectionBytes := range msg.BodySection {
+			bodySection = *section
+			bodyBytes = sectionBytes
+			ok = true
+		}
 
-	return ImapToSimpleMessages(a.messages)
-}
+		if !ok {
+			log.Printf("FETCH command did not return body section")
+			continue
+		}
 
-func ImapToSimpleMessage(msg imap.Message) Message {
-	r := msg.GetBody(&imap.BodySectionName{})
-	if r == nil {
-		log.Println("Error getting body")
-	}
+		log.Printf("Body bytes: %v", len(bodyBytes))
 
-	read, err := message.Read(r)
-	if err != nil {
-		log.Println("Error reading message")
-	}
+		for i, field := range bodySection.HeaderFields {
+			log.Printf("Header field %d: %v", i, field)
+		}
+		mr, err := mail.CreateReader(bytes.NewReader(bodyBytes))
+		if err != nil {
+			log.Printf("failed to create mail reader: %v", err)
+		}
 
-	body := ""
+		h := mr.Header
+		if date, err := h.Date(); err != nil {
+			log.Printf("failed to parse Date header field: %v", err)
+		} else {
+			message.Date = date
+		}
 
-	if read.MultipartReader() != nil {
-		for part, err := read.MultipartReader().NextPart(); err == nil; part, err = read.MultipartReader().NextPart() {
-			if strings.Contains(part.Header.Get("Content-Type"), "text/plain") {
-				buf := new(bytes.Buffer)
-				buf.ReadFrom(part.Body)
-				body = buf.String()
+		if to, err := h.AddressList("To"); err != nil {
+			log.Printf("failed to parse To header field: %v", err)
+		} else {
+			message.To = to
+		}
+		if from, err := h.AddressList("From"); err != nil {
+			log.Printf("failed to parse From header field: %v", err)
+		} else {
+			message.From = from
+		}
+		if replyTo, err := h.AddressList("Reply-To"); err != nil {
+			log.Printf("failed to parse Reply-To header field: %v", err)
+		} else {
+			message.ReplyTo = replyTo
+		}
+		if cc, err := h.AddressList("Cc"); err != nil {
+			log.Printf("failed to parse Cc header field: %v", err)
+		} else {
+			message.Cc = cc
+		}
+		if bcc, err := h.AddressList("Bcc"); err != nil {
+			log.Printf("failed to parse Bcc header field: %v", err)
+		} else {
+			message.Bcc = bcc
+		}
+
+		if subject, err := h.Text("Subject"); err != nil {
+			log.Printf("failed to parse Subject header field: %v", err)
+		} else {
+			message.Subject = subject
+		}
+
+		for {
+			p, err := mr.NextPart()
+			if err == io.EOF {
 				break
+			} else if err != nil {
+				log.Fatalf("failed to read message part: %v", err)
+			}
+
+			switch h := p.Header.(type) {
+			case *mail.InlineHeader:
+				if message.Body != "" || strings.Contains(h.Get("Content-Type"), "text/plain") {
+					continue
+				}
+				b, _ := io.ReadAll(p.Body)
+				message.Body = string(b)
+			case *mail.AttachmentHeader:
+				filename, _ := h.Filename()
+				log.Printf("Attachment: %v", filename)
 			}
 		}
-	} else {
-		log.Println("Single part message")
-		buf := new(bytes.Buffer)
-		buf.ReadFrom(read.Body)
-		body = buf.String()
+
+		a.messages = append(a.messages, message)
 	}
 
-	return Message{
-		Subject: msg.Envelope.Subject,
-		From:    msg.Envelope.From[0].Address(),
-		Uid:     msg.Uid,
-		Body:    body,
-	}
-}
+	//for {
+	//	msg := fetchCmd.Next()
+	//	if msg == nil {
+	//		break
+	//	}
+	//
+	//	log.Println(msg.SeqNum)
+	//
+	//	message := Message{}
+	//
+	//	// Find the body section in the response
+	//	var bodySection imapclient.FetchItemDataBodySection
+	//	ok = false
+	//	for {
+	//		item := msg.Next()
+	//		if item == nil {
+	//			break
+	//		}
+	//		switch item := item.(type) {
+	//		case *imapclient.FetchItemDataBodySection:
+	//			bodySection = *item
+	//			ok = true
+	//		case imapclient.FetchItemDataUID:
+	//			message.Uid = uint32(item.UID)
+	//		}
+	//		bodySection, ok = item.(imapclient.FetchItemDataBodySection)
+	//		if ok {
+	//			break
+	//		}
+	//	}
+	//	if !ok {
+	//		log.Fatalf("FETCH command did not return body section")
+	//	}
+	//
+	//	// Read the message via the go-message library
+	//	mr, err := mail.CreateReader(bodySection.Literal)
+	//	if err != nil {
+	//		log.Fatalf("failed to create mail reader: %v", err)
+	//	}
+	//
+	//	// Print a few header fields
+	//	h := mr.Header
+	//	if date, err := h.Date(); err != nil {
+	//		log.Printf("failed to parse Date header field: %v", err)
+	//	} else {
+	//		message.Date = date
+	//	}
+	//
+	//	if to, err := h.AddressList("To"); err != nil {
+	//		log.Printf("failed to parse To header field: %v", err)
+	//	} else {
+	//		message.To = to
+	//	}
+	//	if from, err := h.AddressList("From"); err != nil {
+	//		log.Printf("failed to parse From header field: %v", err)
+	//	} else {
+	//		message.From = from
+	//	}
+	//	if replyTo, err := h.AddressList("Reply-To"); err != nil {
+	//		log.Printf("failed to parse Reply-To header field: %v", err)
+	//	} else {
+	//		message.ReplyTo = replyTo
+	//	}
+	//	if cc, err := h.AddressList("Cc"); err != nil {
+	//		log.Printf("failed to parse Cc header field: %v", err)
+	//	} else {
+	//		message.Cc = cc
+	//	}
+	//	if bcc, err := h.AddressList("Bcc"); err != nil {
+	//		log.Printf("failed to parse Bcc header field: %v", err)
+	//	} else {
+	//		message.Bcc = bcc
+	//	}
+	//
+	//	if subject, err := h.Text("Subject"); err != nil {
+	//		log.Printf("failed to parse Subject header field: %v", err)
+	//	} else {
+	//		message.Subject = subject
+	//	}
+	//
+	//	// Process the message's parts
+	//	for {
+	//		p, err := mr.NextPart()
+	//		if err == io.EOF {
+	//			break
+	//		} else if err != nil {
+	//			log.Fatalf("failed to read message part: %v", err)
+	//		}
+	//
+	//		switch h := p.Header.(type) {
+	//		case *mail.InlineHeader:
+	//			if message.Body != "" || strings.Contains(h.Get("Content-Type"), "text/plain") {
+	//				continue
+	//			}
+	//			b, _ := io.ReadAll(p.Body)
+	//			message.Body = string(b)
+	//		case *mail.AttachmentHeader:
+	//			filename, _ := h.Filename()
+	//			log.Printf("Attachment: %v", filename)
+	//		}
+	//	}
+	//
+	//	if err := fetchCmd.Close(); err != nil {
+	//		log.Fatalf("FETCH command failed: %v", err)
+	//	}
+	//
+	//	a.messages = append(a.messages, message)
+	//}
 
-func ImapToSimpleMessages(messages []imap.Message) []Message {
-	result := make([]Message, len(messages))
-
-	for i, msg := range messages {
-		result[i] = ImapToSimpleMessage(msg)
-	}
-
-	return result
-}
-
-func ImapToSimpleMailboxes(mailboxes []imap.MailboxInfo) []Mailbox {
-	result := make([]Mailbox, len(mailboxes))
-	for i, mbox := range mailboxes {
-		result[i] = Mailbox{
-			Name: mbox.Name,
-		}
-	}
-
-	return result
+	a.loadedMessages = true
 }

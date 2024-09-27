@@ -1,0 +1,11 @@
+<div>
+    {{- /*gotype: mail-client.MessageData*/ -}}
+    {{ .Subject }}
+    <br />
+    From
+    {{ range .From }}
+    <li>{{ .Address }}</li>
+    {{ end }}
+    {{ .Date }}
+    <div id="bodyContainer"></div>
+</div>

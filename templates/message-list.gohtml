@@ -1,0 +1,12 @@
+<div>
+    {{- /*gotype: mail-client.MessageListData*/ -}}
+    <h3>{{ .Mailbox }}</h3>
+    {{ range .Messages }}
+    <div onclick="getMessage({{ .Uid }})">
+        <h4>{{ .Subject }}</h4>
+        {{ range .From }}
+        <p>{{ .Address }}</p>
+        {{ end }}
+    </div>
+    {{ end }}
+</div>

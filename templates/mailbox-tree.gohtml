@@ -7,7 +7,7 @@
       <ul>
         {{ range .Mailboxes }}
         <li>
-          <button>{{ .Name }}</button>
+          <button onclick="getMailboxContents('{{ . }}')">{{ . }}</button>
         </li>
         {{ end }}
       </ul>
