@@ -15,6 +15,7 @@ import (
 )
 
 type App struct {
+	store           *Store
 	config          Config
 	ctx             context.Context
 	accounts        []Account
@@ -40,11 +41,14 @@ type Message struct {
 	Body    string
 }
 
-func NewApp(config Config) *App {
+func NewApp(store *Store, config Config) *App {
+	creds := store.GetAccount("conor@johngregg.org")
+
 	return &App{
+		store:  store,
 		config: config,
 		accounts: []Account{{
-			config.Email,
+			creds.Email,
 			[]imap.ListData{},
 		}},
 	}
@@ -63,7 +67,9 @@ func (a *App) LoadMailboxes() {
 
 	defer c.Logout()
 
-	if err := c.Login(a.config.Email, a.config.Password).Wait(); err != nil {
+	creds := a.store.GetAccount("conor@johngregg.org")
+
+	if err := c.Login(creds.Email, creds.Password).Wait(); err != nil {
 		log.Printf("Error logging in: %v", err)
 		return
 	}
@@ -98,7 +104,9 @@ func (a *App) LoadMessages() {
 
 	defer c.Logout()
 
-	if err := c.Login(a.config.Email, a.config.Password).Wait(); err != nil {
+	creds := a.store.GetAccount("conor@johngregg.org")
+
+	if err := c.Login(creds.Email, creds.Password).Wait(); err != nil {
 		log.Printf("Error logging in: %v", err)
 		return
 	}

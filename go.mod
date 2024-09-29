@@ -7,6 +7,7 @@ toolchain go1.23.0
 require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.3
 	github.com/emersion/go-message v0.18.1
+	github.com/mattn/go-sqlite3 v1.14.23
 	github.com/spf13/viper v1.19.0
 	github.com/wailsapp/wails/v2 v2.9.2
 )

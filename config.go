@@ -6,8 +6,7 @@ import (
 )
 
 type Config struct {
-	Email    string
-	Password string
+	DbName string
 }
 
 func GetConfig() Config {
@@ -20,5 +19,7 @@ func GetConfig() Config {
 		log.Panicf("Error reading config file: %s", err)
 	}
 
-	return Config{Email: viper.Get("email").(string), Password: viper.Get("password").(string)}
+	return Config{
+		DbName: viper.Get("dbName").(string),
+	}
 }

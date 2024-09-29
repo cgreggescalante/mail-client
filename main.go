@@ -13,8 +13,9 @@ var assets embed.FS
 
 func main() {
 	config := GetConfig()
+	cache := NewStore(config)
 
-	app := NewApp(config)
+	app := NewApp(cache, config)
 
 	err := wails.Run(&options.App{
 		Title:  "mail-client",
